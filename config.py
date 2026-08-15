@@ -22,6 +22,6 @@ FACE_SIZE = (200, 200)         # all saved/trained faces are resized to this
 # LBPH gives a DISTANCE score: lower = more confident match.
 # Tune this after real-world testing. Start conservative (lower number).
 CONFIDENCE_THRESHOLD = 65
-ATTENDANCE_COOLDOWN_SECONDS = 30  # avoid re-logging the same person every frame
+ATTENDANCE_COOLDOWN_SECONDS = 10 # avoid re-logging the same person every frame
 
 os.makedirs(DATASET_DIR, exist_ok=True)
