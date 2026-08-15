@@ -15,7 +15,9 @@ def main():
         print("No trained model found. Run train_model.py first.")
         return
 
-    recognizer = cv2.face.LBPHFaceRecognizer_create()
+    # radius/neighbors/grid tuned tighter than defaults for better discrimination
+    # when only a small number of members are enrolled
+    recognizer = cv2.face.LBPHFaceRecognizer_create(radius=2, neighbors=8, grid_x=8, grid_y=8)
     recognizer.read(MODEL_PATH)
 
     face_cascade = cv2.CascadeClassifier(CASCADE_PATH)
@@ -44,6 +46,7 @@ def main():
             for (x, y, w, h) in faces:
                 face_img = gray[y:y + h, x:x + w]
                 face_img = cv2.resize(face_img, FACE_SIZE)
+                face_img = cv2.equalizeHist(face_img)  # must match enrollment preprocessing
 
                 label_id, distance = recognizer.predict(face_img)
 

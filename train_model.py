@@ -46,7 +46,7 @@ def main():
 
     print(f"Training on {len(faces)} photos across {len(set(labels))} member(s)...")
 
-    recognizer = cv2.face.LBPHFaceRecognizer_create()
+    recognizer = cv2.face.LBPHFaceRecognizer_create(radius=2, neighbors=8, grid_x=8, grid_y=8)
     recognizer.train(faces, np.array(labels))
     recognizer.save(MODEL_PATH)
 

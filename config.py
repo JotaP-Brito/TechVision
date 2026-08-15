@@ -14,7 +14,7 @@ FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
 
 # ---- Enrollment ----
-PHOTOS_PER_MEMBER = 5          # how many face samples to capture per member
+PHOTOS_PER_MEMBER = 15         # how many face samples to capture per member (more = better accuracy with few members)
 CAPTURE_DELAY_FRAMES = 8       # frames to wait between each saved photo (avoids near-duplicates)
 FACE_SIZE = (200, 200)         # all saved/trained faces are resized to this
 

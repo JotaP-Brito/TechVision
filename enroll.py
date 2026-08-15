@@ -54,6 +54,7 @@ def main():
                 (x, y, w, h) = faces[0]
                 face_img = gray[y:y + h, x:x + w]
                 face_img = cv2.resize(face_img, FACE_SIZE)
+                face_img = cv2.equalizeHist(face_img)  # normalize lighting for consistent matching
                 filename = os.path.join(member_dir, f"img_{captured}.jpg")
                 cv2.imwrite(filename, face_img)
                 captured += 1
