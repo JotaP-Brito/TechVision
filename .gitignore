@@ -1,0 +1,10 @@
+# Sensitive member data - never commit
+dataset/
+gym.db
+model.yml
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
