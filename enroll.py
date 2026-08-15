@@ -2,9 +2,24 @@ import os
 import cv2
 from config import (
     DATASET_DIR, CASCADE_PATH, CAMERA_INDEX, FRAME_WIDTH, FRAME_HEIGHT,
-    PHOTOS_PER_MEMBER, CAPTURE_DELAY_FRAMES, FACE_SIZE
+    PHOTOS_PER_MEMBER, FACE_SIZE
 )
 from database import init_db, add_member
+
+# Pose prompts cycled through during enrollment, one per photo (repeats if
+# PHOTOS_PER_MEMBER is larger than this list). Varying pose/angle on purpose
+# gives the recognizer more to work with than 15 near-identical shots.
+POSE_PROMPTS = [
+    "Look straight at the camera",
+    "Turn head slightly LEFT",
+    "Turn head slightly RIGHT",
+    "Tilt head slightly UP",
+    "Tilt head slightly DOWN",
+    "Look straight, neutral expression",
+    "Look straight, slight smile",
+    "Turn head a bit more LEFT",
+    "Turn head a bit more RIGHT",
+]
 
 
 def main():
@@ -25,11 +40,10 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
 
     print(f"\nEnrolling '{name}' (ID {member_id}).")
-    print("Look at the camera. Move your head slightly between captures.")
+    print("Follow the on-screen pose prompt, then press SPACE to capture that photo.")
     print("Press 'q' to cancel.\n")
 
     captured = 0
-    frame_counter = 0
 
     while captured < PHOTOS_PER_MEMBER:
         ret, frame = cap.read()
@@ -43,29 +57,35 @@ def main():
         for (x, y, w, h) in faces:
             cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-        cv2.putText(frame, f"Captured: {captured}/{PHOTOS_PER_MEMBER}", (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-        cv2.imshow("Enrollment - press q to cancel", frame)
+        prompt = POSE_PROMPTS[captured % len(POSE_PROMPTS)]
 
-        # Only try to save when exactly one face is visible, and pace captures out
-        if len(faces) == 1:
-            frame_counter += 1
-            if frame_counter >= CAPTURE_DELAY_FRAMES:
-                (x, y, w, h) = faces[0]
-                face_img = gray[y:y + h, x:x + w]
-                face_img = cv2.resize(face_img, FACE_SIZE)
-                face_img = cv2.equalizeHist(face_img)  # normalize lighting for consistent matching
-                filename = os.path.join(member_dir, f"img_{captured}.jpg")
-                cv2.imwrite(filename, face_img)
-                captured += 1
-                frame_counter = 0
-                print(f"Saved photo {captured}/{PHOTOS_PER_MEMBER}")
-        else:
-            frame_counter = 0
+        # Header bar for readability
+        cv2.rectangle(frame, (0, 0), (FRAME_WIDTH, 70), (0, 0, 0), -1)
+        cv2.putText(frame, f"Photo {captured + 1}/{PHOTOS_PER_MEMBER}: {prompt}",
+                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 255), 2)
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        ready = len(faces) == 1
+        status = "Ready - press SPACE" if ready else "Position one face in frame"
+        status_color = (0, 255, 0) if ready else (0, 0, 255)
+        cv2.putText(frame, status, (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.6, status_color, 2)
+
+        cv2.imshow("Enrollment - SPACE to capture, q to cancel", frame)
+
+        key = cv2.waitKey(1) & 0xFF
+
+        if key == ord('q'):
             print("Enrollment cancelled.")
             break
+
+        if key == ord(' ') and ready:
+            (x, y, w, h) = faces[0]
+            face_img = gray[y:y + h, x:x + w]
+            face_img = cv2.resize(face_img, FACE_SIZE)
+            face_img = cv2.equalizeHist(face_img)  # normalize lighting for consistent matching
+            filename = os.path.join(member_dir, f"img_{captured}.jpg")
+            cv2.imwrite(filename, face_img)
+            captured += 1
+            print(f"Saved photo {captured}/{PHOTOS_PER_MEMBER} ({prompt})")
 
     cap.release()
     cv2.destroyAllWindows()
