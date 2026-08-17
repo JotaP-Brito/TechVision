@@ -6,6 +6,7 @@ from config import DB_PATH
 def get_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")   # <-- added
     return conn
 
 
@@ -66,7 +67,8 @@ def get_all_active_members():
 def get_member_name(member_id):
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute("SELECT name FROM members WHERE id = ?", (member_id,))
+    # Only return name if member is active
+    cur.execute("SELECT name FROM members WHERE id = ? AND active = 1", (member_id,))
     row = cur.fetchone()
     conn.close()
     return row["name"] if row else None
