@@ -15,22 +15,24 @@ def main():
         print("No trained model found. Run train_model.py first.")
         return
 
-    # radius/neighbors/grid tuned tighter than defaults for better discrimination
-    # when only a small number of members are enrolled
     recognizer = cv2.face.LBPHFaceRecognizer_create(radius=2, neighbors=8, grid_x=8, grid_y=8)
     recognizer.read(MODEL_PATH)
 
     face_cascade = cv2.CascadeClassifier(CASCADE_PATH)
     cap = cv2.VideoCapture(CAMERA_INDEX)
+    if not cap.isOpened():
+        print(f"Error: Could not open camera at index {CAMERA_INDEX}.")
+        return
+
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
 
-    last_logged = {}  # member_id -> last log timestamp, to avoid spamming attendance
-
+    last_logged = {}  # member_id -> last log timestamp
     print("Recognition running. Press 'q' to quit.")
 
-    frame_skip = 3  # only run detection/recognition every Nth frame
+    frame_skip = 3
     frame_count = 0
+    last_results = []   # store (x, y, w, h, text, color) for smooth drawing
 
     while True:
         ret, frame = cap.read()
@@ -39,19 +41,23 @@ def main():
             break
 
         frame_count += 1
+
         if frame_count % frame_skip == 0:
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(80, 80))
 
+            last_results = []
             for (x, y, w, h) in faces:
                 face_img = gray[y:y + h, x:x + w]
                 face_img = cv2.resize(face_img, FACE_SIZE)
-                face_img = cv2.equalizeHist(face_img)  # must match enrollment preprocessing
+                face_img = cv2.equalizeHist(face_img)
 
                 label_id, distance = recognizer.predict(face_img)
 
-                if distance < CONFIDENCE_THRESHOLD:
-                    name = get_member_name(label_id) or "Unknown"
+                # Determine name and color
+                name = get_member_name(label_id) if distance < CONFIDENCE_THRESHOLD else None
+
+                if name is not None:
                     color = (0, 255, 0)
                     text = f"{name} ({distance:.0f})"
 
@@ -64,8 +70,12 @@ def main():
                     color = (0, 0, 255)
                     text = f"Unknown ({distance:.0f})"
 
-                cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-                cv2.putText(frame, text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+                last_results.append((x, y, w, h, text, color))
+
+        # Draw results every frame (even if not a detection frame)
+        for (x, y, w, h, text, color) in last_results:
+            cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
+            cv2.putText(frame, text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
         cv2.imshow("Gym Face Recognition - press q to quit", frame)
 
