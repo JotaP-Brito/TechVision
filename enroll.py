@@ -1,14 +1,15 @@
 import os
 import cv2
+import re
+import shutil
 from config import (
     DATASET_DIR, CASCADE_PATH, CAMERA_INDEX, FRAME_WIDTH, FRAME_HEIGHT,
     PHOTOS_PER_MEMBER, FACE_SIZE
 )
-from database import init_db, add_member
+from database import init_db, add_member, deactivate_member
 
-# Pose prompts cycled through during enrollment, one per photo (repeats if
-# PHOTOS_PER_MEMBER is larger than this list). Varying pose/angle on purpose
-# gives the recognizer more to work with than 15 near-identical shots.
+
+# Pose prompts cycled through during enrollment
 POSE_PROMPTS = [
     "Look straight at the camera",
     "Turn head slightly LEFT",
@@ -22,6 +23,11 @@ POSE_PROMPTS = [
 ]
 
 
+def safe_name(name):
+    """Replace characters that are problematic in file/folder names."""
+    return re.sub(r'[^A-Za-z0-9_\- ]', '_', name).strip()
+
+
 def main():
     init_db()
 
@@ -31,11 +37,19 @@ def main():
         return
 
     member_id = add_member(name)
-    member_dir = os.path.join(DATASET_DIR, f"{member_id}_{name}")
+    safe = safe_name(name)
+    member_dir = os.path.join(DATASET_DIR, f"{member_id}_{safe}")
     os.makedirs(member_dir, exist_ok=True)
 
     face_cascade = cv2.CascadeClassifier(CASCADE_PATH)
     cap = cv2.VideoCapture(CAMERA_INDEX)
+    if not cap.isOpened():
+        print(f"Error: Could not open camera at index {CAMERA_INDEX}.")
+        # Clean up the just-created member and folder
+        deactivate_member(member_id)
+        shutil.rmtree(member_dir, ignore_errors=True)
+        return
+
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
 
@@ -59,8 +73,9 @@ def main():
 
         prompt = POSE_PROMPTS[captured % len(POSE_PROMPTS)]
 
-        # Header bar for readability
-        cv2.rectangle(frame, (0, 0), (FRAME_WIDTH, 70), (0, 0, 0), -1)
+        # Header bar for readability (use frame dimensions, not config)
+        h, w = frame.shape[:2]
+        cv2.rectangle(frame, (0, 0), (w, 70), (0, 0, 0), -1)
         cv2.putText(frame, f"Photo {captured + 1}/{PHOTOS_PER_MEMBER}: {prompt}",
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 255), 2)
 
@@ -75,13 +90,16 @@ def main():
 
         if key == ord('q'):
             print("Enrollment cancelled.")
+            # Clean up partial data: deactivate member and delete folder
+            deactivate_member(member_id)
+            shutil.rmtree(member_dir, ignore_errors=True)
             break
 
         if key == ord(' ') and ready:
             (x, y, w, h) = faces[0]
             face_img = gray[y:y + h, x:x + w]
             face_img = cv2.resize(face_img, FACE_SIZE)
-            face_img = cv2.equalizeHist(face_img)  # normalize lighting for consistent matching
+            face_img = cv2.equalizeHist(face_img)
             filename = os.path.join(member_dir, f"img_{captured}.jpg")
             cv2.imwrite(filename, face_img)
             captured += 1
