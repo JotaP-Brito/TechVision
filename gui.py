@@ -58,19 +58,22 @@ F_MONO   = ("Consolas", 9)
 
 
 def round_rect(canvas, x1, y1, x2, y2, r, **kwargs):
-    """Draw a true rounded rectangle using arcs and rectangles."""
+    """Draw a rounded rectangle using arcs and rectangles."""
     points = [
         x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r,
         x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2,
         x1, y2, x1, y2 - r, x1, y1 + r, x1, y1,
     ]
-    # Draw the main polygon (flat edges)
     canvas.create_polygon(points, smooth=False, **kwargs)
-    # Draw the four corner arcs
-    canvas.create_arc(x1, y1, x1 + 2*r, y1 + 2*r, start=90, extent=90, style=tk.ARC, outline=kwargs.get('fill', ''), width=0)
-    canvas.create_arc(x2 - 2*r, y1, x2, y1 + 2*r, start=0, extent=90, style=tk.ARC, outline=kwargs.get('fill', ''), width=0)
-    canvas.create_arc(x1, y2 - 2*r, x1 + 2*r, y2, start=180, extent=90, style=tk.ARC, outline=kwargs.get('fill', ''), width=0)
-    canvas.create_arc(x2 - 2*r, y2 - 2*r, x2, y2, start=270, extent=90, style=tk.ARC, outline=kwargs.get('fill', ''), width=0)
+    # Draw corner arcs
+    canvas.create_arc(x1, y1, x1 + 2*r, y1 + 2*r, start=90, extent=90,
+                      style=tk.ARC, outline=kwargs.get('fill', ''), width=0)
+    canvas.create_arc(x2 - 2*r, y1, x2, y1 + 2*r, start=0, extent=90,
+                      style=tk.ARC, outline=kwargs.get('fill', ''), width=0)
+    canvas.create_arc(x1, y2 - 2*r, x1 + 2*r, y2, start=180, extent=90,
+                      style=tk.ARC, outline=kwargs.get('fill', ''), width=0)
+    canvas.create_arc(x2 - 2*r, y2 - 2*r, x2, y2, start=270, extent=90,
+                      style=tk.ARC, outline=kwargs.get('fill', ''), width=0)
 
 
 class Button(tk.Canvas):
@@ -167,7 +170,6 @@ class TechVisionApp:
         style = ttk.Style()
         style.theme_use("clam")
 
-        # Treeview styling
         style.configure("Treeview",
                          background=C["card"], fieldbackground=C["card"],
                          foreground=C["text"], borderwidth=0, rowheight=30,
@@ -179,12 +181,10 @@ class TechVisionApp:
                          borderwidth=0, font=F_SMALL, relief="flat")
         style.map("Treeview.Heading", background=[("active", C["sidebar_hi"])])
 
-        # Scrollbar styling
         style.configure("Vertical.TScrollbar", background=C["card_border"],
                          troughcolor=C["bg"], borderwidth=0, arrowsize=12)
         style.map("Vertical.TScrollbar", background=[("active", C["text_dim"])])
 
-        # Entry styling (unused but kept for future)
         style.configure("Modern.TEntry", fieldbackground=C["card"],
                          foreground=C["text"], borderwidth=1,
                          insertcolor=C["text"])
@@ -235,7 +235,6 @@ class TechVisionApp:
         self.content.pack(fill=tk.BOTH, expand=True, padx=36, pady=(10, 30))
 
     def _add_nav_item(self, key, icon, label):
-        # Use a single frame that handles the whole click area
         row = tk.Frame(self.sidebar, bg=C["sidebar"], cursor="hand2")
         row.pack(fill=tk.X, padx=12, pady=3)
 
@@ -252,19 +251,22 @@ class TechVisionApp:
 
         # Bind click only to the row frame (prevents double firing)
         row.bind("<Button-1>", lambda e, k=key: self.show_panel(k))
-        # Add hover effect
+
+        # Hover effect
         def on_enter(e):
-            if self.nav_buttons.get(key):  # active check if not already active
+            if not self._is_nav_active(key):
                 row.configure(bg=C["sidebar_hi"])
                 inner.configure(bg=C["sidebar_hi"])
                 icon_lbl.configure(bg=C["sidebar_hi"])
                 text_lbl.configure(bg=C["sidebar_hi"])
+
         def on_leave(e):
             if not self._is_nav_active(key):
                 row.configure(bg=C["sidebar"])
                 inner.configure(bg=C["sidebar"])
                 icon_lbl.configure(bg=C["sidebar"])
                 text_lbl.configure(bg=C["sidebar"])
+
         row.bind("<Enter>", on_enter)
         row.bind("<Leave>", on_leave)
 
@@ -308,6 +310,29 @@ class TechVisionApp:
         self.header_subtitle.config(text=subtitle)
         getattr(self, f"show_{key}_panel")()
 
+    # ---------------- Helper: display frame in label ----------------
+    def _display_frame(self, frame):
+        """Resize frame to fit the label while maintaining aspect ratio and display."""
+        if not hasattr(self, 'video_label'):
+            return
+        label_w = self.video_label.winfo_width()
+        label_h = self.video_label.winfo_height()
+        if label_w <= 1 or label_h <= 1:
+            label_w, label_h = FRAME_WIDTH, FRAME_HEIGHT
+
+        frame_h, frame_w = frame.shape[:2]
+        scale = min(label_w / frame_w, label_h / frame_h)
+        new_w = int(frame_w * scale)
+        new_h = int(frame_h * scale)
+        if new_w > 0 and new_h > 0:
+            frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        img = Image.fromarray(rgb)
+        imgtk = ImageTk.PhotoImage(image=img)
+        self.video_label.imgtk = imgtk
+        self.video_label.configure(image=imgtk)
+
     # ---------------- ENROLL ----------------
     def show_enroll_panel(self):
         self.clear_content()
@@ -317,8 +342,13 @@ class TechVisionApp:
         pad = tk.Frame(card, bg=C["card"])
         pad.pack(fill=tk.BOTH, expand=True, padx=28, pady=24)
 
+        # Use grid to pin controls at bottom, video flexible
+        pad.grid_rowconfigure(1, weight=1)   # video row expands
+        pad.grid_columnconfigure(0, weight=1)
+
+        # Member name row
         row = tk.Frame(pad, bg=C["card"])
-        row.pack(fill=tk.X, pady=(0, 16))
+        row.grid(row=0, column=0, sticky="ew", pady=(0, 16))
         tk.Label(row, text="Member name", font=F_H2, fg=C["text"], bg=C["card"]).pack(anchor="w")
         self.name_entry = tk.Entry(row, font=F_BODY, bg=C["bg"], fg=C["text"],
                                     insertbackground=C["text"], relief="flat",
@@ -326,16 +356,16 @@ class TechVisionApp:
                                     highlightcolor=C["accent"])
         self.name_entry.pack(anchor="w", fill=tk.X, pady=(8, 0), ipady=7)
 
-        # Video container with fixed size to prevent layout jumps
+        # Video container (flexible)
         video_wrap = tk.Frame(pad, bg=C["bg"], highlightbackground=C["card_border"],
-                               highlightthickness=1, width=FRAME_WIDTH+2, height=FRAME_HEIGHT+2)
-        video_wrap.pack(pady=18)
-        video_wrap.pack_propagate(False)  # keep fixed size
+                               highlightthickness=1)
+        video_wrap.grid(row=1, column=0, sticky="nsew", pady=18)
         self.video_label = tk.Label(video_wrap, bg="#000000")
         self.video_label.pack(fill=tk.BOTH, expand=True)
 
+        # Buttons and status at the bottom
         btn_row = tk.Frame(pad, bg=C["card"])
-        btn_row.pack(pady=(4, 12))
+        btn_row.grid(row=2, column=0, sticky="w", pady=(4, 12))
         self.enroll_start_btn = Button(btn_row, "Start Enrollment", self.start_enrollment,
                                         bg=C["accent"], hover_bg=C["accent_hi"], width=190)
         self.enroll_start_btn.pack(side=tk.LEFT, padx=(0, 10))
@@ -347,7 +377,7 @@ class TechVisionApp:
 
         self.enroll_status_label = tk.Label(pad, text="", font=F_BODY,
                                              fg=C["text_dim"], bg=C["card"])
-        self.enroll_status_label.pack()
+        self.enroll_status_label.grid(row=3, column=0, sticky="w")
 
     def start_enrollment(self):
         name = self.name_entry.get().strip()
@@ -355,7 +385,7 @@ class TechVisionApp:
             messagebox.showerror("Error", "Please enter a member name.")
             return
 
-        # First, try to open the camera
+        # Try to open camera before creating member
         self.face_cascade = cv2.CascadeClassifier(CASCADE_PATH)
         self.cap = cv2.VideoCapture(CAMERA_INDEX)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
@@ -428,12 +458,7 @@ class TechVisionApp:
             self.enroll_cancel_btn.set_state(False)
             return
 
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        img = Image.fromarray(rgb)
-        imgtk = ImageTk.PhotoImage(image=img)
-        self.video_label.imgtk = imgtk
-        self.video_label.configure(image=imgtk)
-
+        self._display_frame(frame)
         self.video_label.after(15, self.update_enrollment_frame)
 
     def cancel_enrollment(self):
@@ -508,15 +533,20 @@ class TechVisionApp:
         pad = tk.Frame(card, bg=C["card"])
         pad.pack(fill=tk.BOTH, expand=True, padx=28, pady=24)
 
+        # Use grid to pin controls at bottom, video flexible
+        pad.grid_rowconfigure(1, weight=1)
+        pad.grid_columnconfigure(0, weight=1)
+
+        # Video container
         video_wrap = tk.Frame(pad, bg=C["bg"], highlightbackground=C["card_border"],
-                               highlightthickness=1, width=FRAME_WIDTH+2, height=FRAME_HEIGHT+2)
-        video_wrap.pack(pady=(0, 18))
-        video_wrap.pack_propagate(False)
+                               highlightthickness=1)
+        video_wrap.grid(row=0, column=0, sticky="nsew", pady=(0, 18))
         self.video_label = tk.Label(video_wrap, bg="#000000")
         self.video_label.pack(fill=tk.BOTH, expand=True)
 
+        # Buttons and status at bottom
         btn_row = tk.Frame(pad, bg=C["card"])
-        btn_row.pack()
+        btn_row.grid(row=1, column=0, sticky="w")
         self.recog_start_btn = Button(btn_row, "Start Recognition", self.start_recognition,
                                        bg=C["accent"], hover_bg=C["accent_hi"], width=190)
         self.recog_start_btn.pack(side=tk.LEFT, padx=(0, 10))
@@ -527,7 +557,7 @@ class TechVisionApp:
         self.recog_stop_btn.pack(side=tk.LEFT)
 
         self.recog_status = tk.Label(pad, text="", font=F_BODY, fg=C["text_dim"], bg=C["card"])
-        self.recog_status.pack(pady=(12, 0))
+        self.recog_status.grid(row=2, column=0, sticky="w", pady=(12, 0))
 
     def start_recognition(self):
         if not os.path.exists(MODEL_PATH):
@@ -601,12 +631,7 @@ class TechVisionApp:
             cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
             cv2.putText(frame, text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        img = Image.fromarray(rgb)
-        imgtk = ImageTk.PhotoImage(image=img)
-        self.video_label.imgtk = imgtk
-        self.video_label.configure(image=imgtk)
-
+        self._display_frame(frame)
         self.video_label.after(15, self.update_recognition_frame)
 
     def stop_recognition(self):
