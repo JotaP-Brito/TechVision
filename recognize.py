@@ -2,30 +2,41 @@ import os
 import time
 import cv2
 from config import (
-    MODEL_PATH, CASCADE_PATH, CAMERA_INDEX, FRAME_WIDTH, FRAME_HEIGHT,
-    FACE_SIZE, CONFIDENCE_THRESHOLD, ATTENDANCE_COOLDOWN_SECONDS
+    MODEL_PATH, CAMERA_INDEX, CONFIDENCE_THRESHOLD, ATTENDANCE_COOLDOWN_SECONDS
 )
-from database import init_db, get_member_name, log_attendance
+from database import get_member_name, get_training_status, init_db, log_attendance
+from vision import (
+    VisionSetupError,
+    create_face_recognizer,
+    load_face_cascade,
+    model_file_exists,
+    open_camera,
+    prepare_face_image,
+)
 
 
 def main():
     init_db()
 
-    if not os.path.exists(MODEL_PATH):
+    if not model_file_exists(MODEL_PATH):
         print("No trained model found. Run train_model.py first.")
         return
 
-    recognizer = cv2.face.LBPHFaceRecognizer_create(radius=2, neighbors=8, grid_x=8, grid_y=8)
-    recognizer.read(MODEL_PATH)
-
-    face_cascade = cv2.CascadeClassifier(CASCADE_PATH)
-    cap = cv2.VideoCapture(CAMERA_INDEX)
-    if not cap.isOpened():
-        print(f"Error: Could not open camera at index {CAMERA_INDEX}.")
+    training_status = get_training_status()
+    if not training_status["ready"]:
+        print(f"Model is out of date: {training_status['reason']}")
+        print("Run train_model.py before starting recognition.")
         return
 
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
+    try:
+        recognizer = create_face_recognizer()
+        face_cascade = load_face_cascade()
+        cap = open_camera(CAMERA_INDEX)
+    except VisionSetupError as exc:
+        print(f"Error: {exc}")
+        return
+
+    recognizer.read(MODEL_PATH)
 
     last_logged = {}  # member_id -> last log timestamp
     print("Recognition running. Press 'q' to quit.")
@@ -48,9 +59,7 @@ def main():
 
             last_results = []
             for (x, y, w, h) in faces:
-                face_img = gray[y:y + h, x:x + w]
-                face_img = cv2.resize(face_img, FACE_SIZE)
-                face_img = cv2.equalizeHist(face_img)
+                face_img = prepare_face_image(gray, x, y, w, h)
 
                 label_id, distance = recognizer.predict(face_img)
 

@@ -1,15 +1,20 @@
 import os
-import cv2
-import re
 import shutil
+import cv2
 from config import (
-    DATASET_DIR, CASCADE_PATH, CAMERA_INDEX, FRAME_WIDTH, FRAME_HEIGHT,
-    PHOTOS_PER_MEMBER, FACE_SIZE
+    DATASET_DIR, CAMERA_INDEX, PHOTOS_PER_MEMBER
 )
-from database import init_db, add_member, deactivate_member
+from database import add_member, deactivate_member, init_db, mark_dataset_changed
+from vision import (
+    VisionSetupError,
+    ensure_valid_member_name,
+    load_face_cascade,
+    open_camera,
+    prepare_face_image,
+    sanitize_member_name,
+)
 
 
-# Pose prompts cycled through during enrollment
 POSE_PROMPTS = [
     "Look straight at the camera",
     "Turn head slightly LEFT",
@@ -23,35 +28,28 @@ POSE_PROMPTS = [
 ]
 
 
-def safe_name(name):
-    """Replace characters that are problematic in file/folder names."""
-    return re.sub(r'[^A-Za-z0-9_\- ]', '_', name).strip()
-
-
 def main():
     init_db()
 
-    name = input("Enter member name: ").strip()
-    if not name:
-        print("Name cannot be empty.")
+    try:
+        name = ensure_valid_member_name(input("Enter member name: "))
+    except ValueError as exc:
+        print(exc)
         return
 
     member_id = add_member(name)
-    safe = safe_name(name)
+    safe = sanitize_member_name(name)
     member_dir = os.path.join(DATASET_DIR, f"{member_id}_{safe}")
     os.makedirs(member_dir, exist_ok=True)
 
-    face_cascade = cv2.CascadeClassifier(CASCADE_PATH)
-    cap = cv2.VideoCapture(CAMERA_INDEX)
-    if not cap.isOpened():
-        print(f"Error: Could not open camera at index {CAMERA_INDEX}.")
-        # Clean up the just-created member and folder
+    try:
+        face_cascade = load_face_cascade()
+        cap = open_camera(CAMERA_INDEX)
+    except VisionSetupError as exc:
+        print(f"Error: {exc}")
         deactivate_member(member_id)
         shutil.rmtree(member_dir, ignore_errors=True)
         return
-
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
 
     print(f"\nEnrolling '{name}' (ID {member_id}).")
     print("Follow the on-screen pose prompt, then press SPACE to capture that photo.")
@@ -90,16 +88,13 @@ def main():
 
         if key == ord('q'):
             print("Enrollment cancelled.")
-            # Clean up partial data: deactivate member and delete folder
             deactivate_member(member_id)
             shutil.rmtree(member_dir, ignore_errors=True)
             break
 
         if key == ord(' ') and ready:
             (x, y, w, h) = faces[0]
-            face_img = gray[y:y + h, x:x + w]
-            face_img = cv2.resize(face_img, FACE_SIZE)
-            face_img = cv2.equalizeHist(face_img)
+            face_img = prepare_face_image(gray, x, y, w, h)
             filename = os.path.join(member_dir, f"img_{captured}.jpg")
             cv2.imwrite(filename, face_img)
             captured += 1
@@ -109,6 +104,7 @@ def main():
     cv2.destroyAllWindows()
 
     if captured == PHOTOS_PER_MEMBER:
+        mark_dataset_changed()
         print(f"\nEnrollment complete for '{name}' (ID {member_id}).")
         print("Run train_model.py to update the recognition model.")
     else:
