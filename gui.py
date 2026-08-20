@@ -360,6 +360,14 @@ class TechVisionApp:
 
         return f"Model needs training. {status['reason']}", C["warning"]
 
+    def _cleanup_incomplete_enrollment(self):
+        if hasattr(self, 'member_id') and getattr(self, 'captured', 0) < PHOTOS_PER_MEMBER:
+            deactivate_member(self.member_id)
+            if hasattr(self, 'member_dir'):
+                shutil.rmtree(self.member_dir, ignore_errors=True)
+        self.member_id = None
+        self.member_dir = None
+
     # ---------------- ENROLL ----------------
     def show_enroll_panel(self):
         self.clear_content()
@@ -405,27 +413,26 @@ class TechVisionApp:
         self.enroll_status_label = tk.Label(pad, text="", font=F_BODY,
                                              fg=C["text_dim"], bg=C["card"])
         self.enroll_status_label.grid(row=3, column=0, sticky="w")
+        status_text, status_color = self._format_training_status()
+        self.enroll_status_label.config(text=status_text, fg=status_color)
 
     def start_enrollment(self):
-        name = self.name_entry.get().strip()
-        if not name:
-            messagebox.showerror("Error", "Please enter a member name.")
+        try:
+            name = ensure_valid_member_name(self.name_entry.get())
+        except ValueError as exc:
+            messagebox.showerror("Error", str(exc))
             return
 
-        # Try to open camera before creating member
-        self.face_cascade = cv2.CascadeClassifier(CASCADE_PATH)
-        self.cap = cv2.VideoCapture(CAMERA_INDEX)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
-
-        if not self.cap.isOpened():
-            messagebox.showerror("Error", "Could not open camera.")
+        try:
+            self.face_cascade = load_face_cascade()
+            self.cap = open_camera(CAMERA_INDEX)
+        except VisionSetupError as exc:
+            messagebox.showerror("Error", str(exc))
             self.cap = None
             return
 
-        # Camera works, now create member and folder
         self.member_id = add_member(name)
-        safe_name = "".join(c for c in name if c.isalnum() or c in (' ', '_', '-')).strip()
+        safe_name = sanitize_member_name(name)
         self.member_dir = os.path.join(DATASET_DIR, f"{self.member_id}_{safe_name}")
         os.makedirs(self.member_dir, exist_ok=True)
 
@@ -464,16 +471,15 @@ class TechVisionApp:
 
             if len(faces) == 1 and (time.time() - self.last_capture_time) > self.capture_delay:
                 (x, y, w, h) = faces[0]
-                face_img = gray[y:y + h, x:x + w]
-                face_img = cv2.resize(face_img, FACE_SIZE)
-                face_img = cv2.equalizeHist(face_img)
+                face_img = prepare_face_image(gray, x, y, w, h)
                 filename = os.path.join(self.member_dir, f"img_{self.captured}.jpg")
                 cv2.imwrite(filename, face_img)
                 self.captured += 1
                 self.last_capture_time = time.time()
 
                 if self.captured >= PHOTOS_PER_MEMBER:
-                    self.enroll_status_label.config(text="Enrollment complete — train the model next.")
+                    mark_dataset_changed()
+                    self.enroll_status_label.config(text="Enrollment complete. Train the model before recognition.", fg=C["warning"])
                     self.sidebar_status.set_status("System ready", C["success"])
                     self.stop_camera()
                     self.enroll_start_btn.set_state(True)
@@ -491,10 +497,10 @@ class TechVisionApp:
     def cancel_enrollment(self):
         if hasattr(self, 'member_id'):
             deactivate_member(self.member_id)
-            import shutil
             shutil.rmtree(self.member_dir, ignore_errors=True)
         self.stop_camera()
-        self.enroll_status_label.config(text="Enrollment cancelled.")
+        status_text, status_color = self._format_training_status()
+        self.enroll_status_label.config(text=f"Enrollment cancelled. {status_text}", fg=status_color)
         self.sidebar_status.set_status("System ready", C["success"])
         self.enroll_start_btn.set_state(True)
         self.enroll_cancel_btn.set_state(False)
@@ -524,7 +530,8 @@ class TechVisionApp:
                                  bg=C["teal"], fg="#04211c", hover_bg="#22e8cf", width=170)
         self.train_btn.pack(anchor="w")
 
-        self.train_status = tk.Label(pad, text="", font=F_BODY, fg=C["text_dim"], bg=C["card"])
+        status_text, status_color = self._format_training_status()
+        self.train_status = tk.Label(pad, text=status_text, font=F_BODY, fg=status_color, bg=C["card"])
         self.train_status.pack(anchor="w", pady=(16, 0))
 
     def train_model(self):
@@ -543,7 +550,8 @@ class TechVisionApp:
 
     def _train_complete(self):
         self.train_btn.set_state(True)
-        self.train_status.config(text="Model trained successfully.", fg=C["success"])
+        status_text, status_color = self._format_training_status()
+        self.train_status.config(text=status_text, fg=status_color)
         self.sidebar_status.set_status("System ready", C["success"])
 
     def _train_error(self, msg):
@@ -587,22 +595,25 @@ class TechVisionApp:
         self.recog_status.grid(row=2, column=0, sticky="w", pady=(12, 0))
 
     def start_recognition(self):
-        if not os.path.exists(MODEL_PATH):
+        if not model_file_exists(MODEL_PATH):
             messagebox.showerror("Error", "No trained model found. Please train first.")
             return
 
-        self.recognizer = cv2.face.LBPHFaceRecognizer_create(radius=2, neighbors=8, grid_x=8, grid_y=8)
-        self.recognizer.read(MODEL_PATH)
-        self.face_cascade = cv2.CascadeClassifier(CASCADE_PATH)
+        training_status = get_training_status()
+        if not training_status["ready"]:
+            messagebox.showerror("Error", f"Recognition is blocked until retraining.\n\n{training_status['reason']}")
+            return
 
-        self.cap = cv2.VideoCapture(CAMERA_INDEX)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
-
-        if not self.cap.isOpened():
-            messagebox.showerror("Error", "Could not open camera.")
+        try:
+            self.recognizer = create_face_recognizer()
+            self.face_cascade = load_face_cascade()
+            self.cap = open_camera(CAMERA_INDEX)
+        except VisionSetupError as exc:
+            messagebox.showerror("Error", str(exc))
             self.cap = None
             return
+
+        self.recognizer.read(MODEL_PATH)
 
         self.last_logged = {}
         self.frame_count = 0
@@ -633,9 +644,7 @@ class TechVisionApp:
 
             self.last_results = []
             for (x, y, w, h) in faces:
-                face_img = gray[y:y + h, x:x + w]
-                face_img = cv2.resize(face_img, FACE_SIZE)
-                face_img = cv2.equalizeHist(face_img)
+                face_img = prepare_face_image(gray, x, y, w, h)
 
                 label_id, distance = self.recognizer.predict(face_img)
                 name = get_member_name(label_id) if distance < CONFIDENCE_THRESHOLD else None
@@ -702,20 +711,7 @@ class TechVisionApp:
         for row in self.att_tree.get_children():
             self.att_tree.delete(row)
 
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT attendance.id, members.name, attendance.timestamp, attendance.confidence
-            FROM attendance
-            JOIN members ON attendance.member_id = members.id
-            ORDER BY attendance.timestamp DESC
-            LIMIT 500
-        """)
-        rows = cur.fetchall()
-        conn.close()
-
-        for row in rows:
+        for row in get_recent_attendance():
             conf = f"{row['confidence']:.1f}" if row["confidence"] is not None else ""
             self.att_tree.insert("", tk.END, values=(row["id"], row["name"], row["timestamp"], conf))
 
@@ -759,14 +755,7 @@ class TechVisionApp:
         for row in self.members_tree.get_children():
             self.members_tree.delete(row)
 
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cur = conn.cursor()
-        cur.execute("SELECT id, name, created_at, active FROM members ORDER BY id")
-        rows = cur.fetchall()
-        conn.close()
-
-        for row in rows:
+        for row in get_members():
             active_text = "Yes" if row["active"] else "No"
             self.members_tree.insert("", tk.END, values=(row["id"], row["name"], row["created_at"], active_text))
 
@@ -782,18 +771,16 @@ class TechVisionApp:
         member_id = self.get_selected_member_id()
         if member_id:
             deactivate_member(member_id)
-            messagebox.showinfo("Info", "Member deactivated.\nRemember to delete their folder from dataset/ and retrain the model.")
+            mark_dataset_changed()
+            messagebox.showinfo("Info", "Member deactivated.\nTrain the model again before using recognition.")
             self.load_members()
 
     def reactivate_selected(self):
         member_id = self.get_selected_member_id()
         if member_id:
-            conn = sqlite3.connect(DB_PATH)
-            cur = conn.cursor()
-            cur.execute("UPDATE members SET active = 1 WHERE id = ?", (member_id,))
-            conn.commit()
-            conn.close()
-            messagebox.showinfo("Info", "Member reactivated.")
+            reactivate_member(member_id)
+            mark_dataset_changed()
+            messagebox.showinfo("Info", "Member reactivated.\nTrain the model again before using recognition.")
             self.load_members()
 
     def on_closing(self):
