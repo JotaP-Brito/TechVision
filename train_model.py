@@ -49,7 +49,7 @@ def main():
 
     if len(faces) == 0:
         print("No active member training data found. Enroll a member first or reactivate existing members.")
-        return
+        return False
 
     print(f"Training on {len(faces)} photos across {len(set(labels))} member(s)...")
 
@@ -59,6 +59,7 @@ def main():
     mark_model_trained()
 
     print(f"Model trained and saved to: {MODEL_PATH}")
+    return True
 
 
 if __name__ == "__main__":

@@ -108,6 +108,8 @@ def main():
         print(f"\nEnrollment complete for '{name}' (ID {member_id}).")
         print("Run train_model.py to update the recognition model.")
     else:
+        deactivate_member(member_id)
+        shutil.rmtree(member_dir, ignore_errors=True)
         print(f"\nEnrollment incomplete ({captured}/{PHOTOS_PER_MEMBER} photos saved).")
 
 

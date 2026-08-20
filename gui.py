@@ -453,8 +453,12 @@ class TechVisionApp:
 
         ret, frame = self.cap.read()
         if not ret:
-            self.enroll_status_label.config(text="Failed to read from camera.")
+            self._cleanup_incomplete_enrollment()
+            self.enroll_status_label.config(text="Camera feed was interrupted. Enrollment was cancelled.", fg=C["danger"])
             self.stop_camera()
+            self.enroll_start_btn.set_state(True)
+            self.enroll_cancel_btn.set_state(False)
+            self.sidebar_status.set_status("System ready", C["success"])
             return
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -484,6 +488,8 @@ class TechVisionApp:
                     self.stop_camera()
                     self.enroll_start_btn.set_state(True)
                     self.enroll_cancel_btn.set_state(False)
+                    self.member_id = None
+                    self.member_dir = None
                     return
         else:
             self.stop_camera()
@@ -495,9 +501,7 @@ class TechVisionApp:
         self.video_label.after(15, self.update_enrollment_frame)
 
     def cancel_enrollment(self):
-        if hasattr(self, 'member_id'):
-            deactivate_member(self.member_id)
-            shutil.rmtree(self.member_dir, ignore_errors=True)
+        self._cleanup_incomplete_enrollment()
         self.stop_camera()
         status_text, status_color = self._format_training_status()
         self.enroll_status_label.config(text=f"Enrollment cancelled. {status_text}", fg=status_color)
@@ -543,8 +547,11 @@ class TechVisionApp:
     def _train_model_thread(self):
         try:
             import train_model
-            train_model.main()
-            self.root.after(0, self._train_complete)
+            trained = train_model.main()
+            if trained:
+                self.root.after(0, self._train_complete)
+            else:
+                self.root.after(0, self._train_incomplete)
         except Exception as e:
             self.root.after(0, self._train_error, str(e))
 
@@ -553,6 +560,14 @@ class TechVisionApp:
         status_text, status_color = self._format_training_status()
         self.train_status.config(text=status_text, fg=status_color)
         self.sidebar_status.set_status("System ready", C["success"])
+
+    def _train_incomplete(self):
+        self.train_btn.set_state(True)
+        self.train_status.config(
+            text="Training could not run because no active member photos were available.",
+            fg=C["warning"],
+        )
+        self.sidebar_status.set_status("Training needed", C["warning"])
 
     def _train_error(self, msg):
         self.train_btn.set_state(True)
