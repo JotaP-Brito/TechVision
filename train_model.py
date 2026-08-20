@@ -2,11 +2,14 @@ import os
 import cv2
 import numpy as np
 from config import DATASET_DIR, MODEL_PATH
+from database import get_all_active_members, init_db, mark_model_trained
+from vision import create_face_recognizer
 
 
 def load_training_data():
     faces = []
     labels = []
+    active_members = get_all_active_members()
 
     if not os.path.isdir(DATASET_DIR):
         return faces, labels
@@ -23,6 +26,9 @@ def load_training_data():
             print(f"Skipping folder with unexpected name: {folder_name}")
             continue
 
+        if member_id not in active_members:
+            continue
+
         for filename in os.listdir(folder_path):
             if not filename.lower().endswith((".jpg", ".jpeg", ".png")):
                 continue
@@ -37,18 +43,20 @@ def load_training_data():
 
 
 def main():
+    init_db()
     print("Loading training images from dataset...")
     faces, labels = load_training_data()
 
     if len(faces) == 0:
-        print("No training data found. Enroll at least one member first (enroll.py).")
+        print("No active member training data found. Enroll a member first or reactivate existing members.")
         return
 
     print(f"Training on {len(faces)} photos across {len(set(labels))} member(s)...")
 
-    recognizer = cv2.face.LBPHFaceRecognizer_create(radius=2, neighbors=8, grid_x=8, grid_y=8)
+    recognizer = create_face_recognizer()
     recognizer.train(faces, np.array(labels))
     recognizer.save(MODEL_PATH)
+    mark_model_trained()
 
     print(f"Model trained and saved to: {MODEL_PATH}")
 
