@@ -1,19 +1,38 @@
 import os
 import time
 import threading
-import sqlite3
+import shutil
 import cv2
-import numpy as np
 from PIL import Image, ImageTk
 import tkinter as tk
 from tkinter import ttk, messagebox
 
 from config import (
-    DATASET_DIR, MODEL_PATH, CASCADE_PATH, CAMERA_INDEX,
-    FRAME_WIDTH, FRAME_HEIGHT, PHOTOS_PER_MEMBER, FACE_SIZE,
-    CONFIDENCE_THRESHOLD, ATTENDANCE_COOLDOWN_SECONDS, DB_PATH
+    DATASET_DIR, MODEL_PATH, CAMERA_INDEX, FRAME_WIDTH, FRAME_HEIGHT, PHOTOS_PER_MEMBER,
+    CONFIDENCE_THRESHOLD, ATTENDANCE_COOLDOWN_SECONDS
 )
-from database import init_db, add_member, deactivate_member, get_member_name, log_attendance
+from database import (
+    add_member,
+    deactivate_member,
+    get_member_name,
+    get_members,
+    get_recent_attendance,
+    get_training_status,
+    init_db,
+    log_attendance,
+    mark_dataset_changed,
+    reactivate_member,
+)
+from vision import (
+    VisionSetupError,
+    create_face_recognizer,
+    ensure_valid_member_name,
+    load_face_cascade,
+    model_file_exists,
+    open_camera,
+    prepare_face_image,
+    sanitize_member_name,
+)
 
 POSE_PROMPTS = [
     "Look straight at the camera",
@@ -332,6 +351,14 @@ class TechVisionApp:
         imgtk = ImageTk.PhotoImage(image=img)
         self.video_label.imgtk = imgtk
         self.video_label.configure(image=imgtk)
+
+    def _format_training_status(self):
+        status = get_training_status()
+        if status["ready"]:
+            trained_at = status["model_trained_at"] or "unknown time"
+            return f"Model ready. Last trained: {trained_at}", C["success"]
+
+        return f"Model needs training. {status['reason']}", C["warning"]
 
     # ---------------- ENROLL ----------------
     def show_enroll_panel(self):
